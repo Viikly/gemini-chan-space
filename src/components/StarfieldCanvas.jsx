@@ -465,7 +465,7 @@ export default function StarfieldCanvas({
           E = E - (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
         }
 
-        const a = minDim * 0.175 * unfold;
+        const a = minDim * 0.235 * unfold;
         const b = a * Math.sqrt(1 - e * e);
         const orbX = a * (Math.cos(E) - e);
         const orbY = b * Math.sin(E);
@@ -495,6 +495,70 @@ export default function StarfieldCanvas({
 
         const originX = cx + anchorShiftX + nx * -12;
         const originY = cy + ny * -12;
+
+        // ==========================================================
+        // 新增：深空天文星盘 HUD (Astrolabe Reticle) —— 彻底填补四周空旷感，又不抢双子星风头！
+        // ==========================================================
+        ctx.save();
+        ctx.translate(originX, originY);
+        ctx.rotate(tiltAngle);
+
+        const astrolabeR = minDim * 0.48 * unfold;
+        // 1. 外围缓缓旋转的星盘大虚线圈
+        ctx.save();
+        ctx.scale(1, 0.48);
+        ctx.rotate(now * 0.00008);
+        ctx.beginPath();
+        ctx.setLineDash([3, 14]);
+        ctx.arc(0, 0, astrolabeR, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(192, 132, 252, 0.32)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+
+        // 2. 次外层精密刻度短线（72 格天文方位刻度）
+        ctx.setLineDash([]);
+        const tickR = astrolabeR * 1.08;
+        for (let t = 0; t < 72; t++) {
+          const ang = (t * Math.PI * 2) / 72;
+          const isMajor = t % 9 === 0;
+          const len = isMajor ? 10 : 4;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(ang) * tickR, Math.sin(ang) * tickR);
+          ctx.lineTo(Math.cos(ang) * (tickR + len), Math.sin(ang) * (tickR + len));
+          ctx.strokeStyle = isMajor ? 'rgba(253, 224, 71, 0.32)' : 'rgba(148, 163, 184, 0.12)';
+          ctx.lineWidth = isMajor ? 1.4 : 0.8;
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        // 3. 贯穿东西南北的极细天球坐标轴线（两端渐隐，营造深邃空间纵深）
+        const axisLen = maxDim * 0.46 * unfold;
+        const hAxisGrad = ctx.createLinearGradient(-axisLen, 0, axisLen, 0);
+        hAxisGrad.addColorStop(0, 'rgba(168, 85, 247, 0)');
+        hAxisGrad.addColorStop(0.2, 'rgba(168, 85, 247, 0.14)');
+        hAxisGrad.addColorStop(0.5, 'rgba(253, 224, 71, 0.22)');
+        hAxisGrad.addColorStop(0.8, 'rgba(168, 85, 247, 0.14)');
+        hAxisGrad.addColorStop(1, 'rgba(168, 85, 247, 0)');
+        ctx.beginPath();
+        ctx.moveTo(-axisLen, 0);
+        ctx.lineTo(axisLen, 0);
+        ctx.strokeStyle = hAxisGrad;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        const vAxisLen = minDim * 0.32 * unfold;
+        const vAxisGrad = ctx.createLinearGradient(0, -vAxisLen, 0, vAxisLen);
+        vAxisGrad.addColorStop(0, 'rgba(168, 85, 247, 0)');
+        vAxisGrad.addColorStop(0.5, 'rgba(192, 132, 252, 0.16)');
+        vAxisGrad.addColorStop(1, 'rgba(168, 85, 247, 0)');
+        ctx.beginPath();
+        ctx.moveTo(0, -vAxisLen);
+        ctx.lineTo(0, vAxisLen);
+        ctx.strokeStyle = vAxisGrad;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.restore();
 
         const starAx = originX + baseDx * factorA;
         const starAy = originY + baseDy * factorA;
