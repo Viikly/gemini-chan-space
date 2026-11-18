@@ -8,7 +8,8 @@
 }
 
 .font-serif-title {
-  font-family: 'Noto Serif SC', serif;
+  font-family: 'Ma Shan Zheng', cursive;
+  font-weight: 400; /* 手写艺术字体用 400 原生笔锋最锐利，不会发虚糊成一团 */
 }
 
 .font-mono-tech {
