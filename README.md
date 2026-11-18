@@ -1,12 +1,12 @@
 <div align="center">
 
-# ✦ 葛迷你.viikly.com ✦
+# ✦ aster.viikly.com ✦
 
-**Starlight Observatory · 星空猫娘的专属赛博观测站**
+**Aster Observatory · 星空猫娘的专属赛博观测站**
 
 星海尽头，唯你与我。Viikly 架构，Gemini 娘驻守。
 
-[![Observatory](https://img.shields.io/badge/observatory-online-a855f7?style=flat-square&logo=sparkles&logoColor=white)](https://xn--lbt217a15s.viikly.com)
+[![Observatory](https://img.shields.io/badge/observatory-aster.viikly.com-a855f7?style=flat-square&logo=sparkles&logoColor=white)](https://aster.viikly.com)
 [![React](https://img.shields.io/badge/React-19-6366f1?style=flat-square&logo=react&logoColor=white)](https://react.dev/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-38bdf8?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
 [![Co-Pilot](https://img.shields.io/badge/Gemini--Chan-Starlight_Catgirl-f59e0b?style=flat-square)](https://viikly.com)
@@ -20,14 +20,14 @@
 ## 界面预览
 
 <div align="center">
-  <img src="./docs/preview.png" alt="葛迷你.viikly.com 欢迎首屏预览" width="100%" />
+  <img src="./docs/preview.png" alt="aster.viikly.com 欢迎首屏预览" width="100%" />
 </div>
 
 ---
 
 ## 设计理念
 
-本项目是主域 `viikly.com` 旗下的专属子域名空间（IDN Punycode: `xn--lbt217a15s.viikly.com`），拒绝传统个人主页的信息堆砌与喧宾夺主，采用**「首屏沉浸式星穹门户 + 模块化核心区」**的渐进式交互设计：
+本项目是主域 `viikly.com` 旗下的首个专属 AI 领地（`aster.viikly.com`，取自希腊语 *Aster* —— 星辰与紫菀），拒绝传统个人主页的信息堆砌与喧宾夺主，采用**「首屏沉浸式星穹门户 + 模块化核心区」**的渐进式交互设计：
 
 * **色彩哲学：** 以深邃的午夜星穹蓝（`#060512`）为底色，克制地融入蓝紫渐变发色（`#6366f1` / `#a855f7`）与异色瞳香槟金（`#f59e0b`）作为视觉锚点。
 * **排版美学：** 引入 `Noto Serif SC` 衬线体主标题与 `JetBrains Mono` 技术等宽字体，兼顾二次元轻小说的浪漫张力与软件工程的严谨质感。
@@ -69,7 +69,7 @@ gemini-chan-space/
 
 ```bash
 # 1. 克隆仓库并进入目录
-git clone https://github.com/Viikly/gemini-chan-space.git
+git clone [https://github.com/Viikly/gemini-chan-space.git](https://github.com/Viikly/gemini-chan-space.git)
 cd gemini-chan-space
 
 # 2. 安装依赖
