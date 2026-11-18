@@ -100,60 +100,72 @@ export default function StarfieldCanvas({
     };
 
     const colors = ['167, 139, 250', '129, 140, 248', '252, 211, 77', '244, 114, 182'];
-    const bgStars = Array.from({ length: 120 }, () => ({
-      x: Math.random() * window.innerWidth,
-      y: Math.random() * window.innerHeight,
-      baseR: Math.random() * 1.3 + 0.4,
-      vx: (Math.random() - 0.5) * 0.22,
-      vy: (Math.random() - 0.5) * 0.22,
-      color: colors[Math.floor(Math.random() * colors.length)],
-      baseAlpha: Math.random() * 0.4 + 0.15,
-    }));
+    // 为每颗背景星增加脉冲动量 (pvx, pvy) 与归一化锚点 (u, v)，支持超新星炸散、双子星弹弓甩飞与重置归位！
+    const bgStars = Array.from({ length: 125 }, () => {
+      const u = Math.random();
+      const v = Math.random();
+      return {
+        u,
+        v,
+        x: u * window.innerWidth,
+        y: v * window.innerHeight,
+        baseR: Math.random() * 1.3 + 0.45,
+        vx: (Math.random() - 0.5) * 0.25,
+        vy: (Math.random() - 0.5) * 0.25,
+        pvx: 0, // 附加物理动量 X（用于爆炸冲击与引力弹弓甩飞）
+        pvy: 0, // 附加物理动量 Y
+        color: colors[Math.floor(Math.random() * colors.length)],
+        baseAlpha: Math.random() * 0.4 + 0.15,
+      };
+    });
 
     let particles = [];
     let haloWaves = [];
     let collapseStreaks = [];
     let morphProgress = 0;
 
-    // 历史轨迹存储相对位移向量，切换参考系时拖尾丝滑跟随不断裂！
     let relHistory = [];
     let binaryInitialized = false;
     let collapseSpawned = false;
+    let prevStage = stageRef.current;
+    let lastFrameTime = performance.now();
 
-    // 参考系平滑插值权重：wA=1 表示以紫星为静止参考系，wB=1 表示以黄星为静止参考系
     let weightA = 0;
     let weightB = 0;
-    let anchorShiftX = 0; // 选中星核后，把静止主星平滑移向屏幕黄金侧位，给弹出面板留出舞台
+    let anchorShiftX = 0;
+    let anchorShiftY = 0;
 
-    // 实时记录两颗星核的屏幕坐标，供鼠标悬停/点击捕获判定
     const starScreenPos = {
       ax: -1000,
       ay: -1000,
       bx: -1000,
       by: -1000,
-      hovered: null, // 'aster' | 'viikly' | null
+      vax: 0,
+      vay: 0,
+      vbx: 0,
+      vby: 0,
+      hovered: null,
     };
 
     const onPointerDown = (e) => {
       const { clientX: x, clientY: y } = e;
 
-      // 如果在核心区点击了某颗星核，直接切换为该星核的静止引力参考系！
       if (stageRef.current === 'core') {
+        const hitRadius = window.innerWidth < 768 ? 82 : 68;
         const distA = Math.hypot(x - starScreenPos.ax, y - starScreenPos.ay);
         const distB = Math.hypot(x - starScreenPos.bx, y - starScreenPos.by);
-        if (distA < 68 && distA <= distB) {
+        if (distA < hitRadius && distA <= distB) {
           onSelectCore(selectedCoreRef.current === 'aster' ? null : 'aster');
           haloWaves.push({ x: starScreenPos.ax, y: starScreenPos.ay, r: 10, maxR: 220, thickness: 40, speed: 0.12, alpha: 0.75, color: '192, 132, 252', squash: 0.45, tilt: -0.22 });
           return;
         }
-        if (distB < 68 && distB < distA) {
+        if (distB < hitRadius && distB < distA) {
           onSelectCore(selectedCoreRef.current === 'viikly' ? null : 'viikly');
           haloWaves.push({ x: starScreenPos.bx, y: starScreenPos.by, r: 10, maxR: 220, thickness: 40, speed: 0.12, alpha: 0.75, color: '253, 224, 71', squash: 0.45, tilt: -0.22 });
           return;
         }
       }
 
-      // 日常点击星芒烟花
       for (let i = 0; i < 16; i++) {
         const ang = (Math.PI * 2 * i) / 16 + (Math.random() - 0.5) * 0.3;
         const spd = Math.random() * 5 + 1.5;
@@ -173,18 +185,37 @@ export default function StarfieldCanvas({
     window.addEventListener('pointerdown', onPointerDown);
 
     const render = (now) => {
+      // 防切后台折线保护：如果切走标签页超过 200ms 再回来，自动清空拖尾历史重新起笔
+      if (now - lastFrameTime > 200) {
+        relHistory = [];
+      }
+      lastFrameTime = now;
+
       const w = window.innerWidth;
       const h = window.innerHeight;
       const cx = w / 2;
       const cy = h / 2;
       const minDim = Math.min(w, h);
       const maxDim = Math.max(w, h);
+      const isMobile = w < 768;
+      const responsiveScale = isMobile ? minDim * 1.28 : minDim;
 
       ctx.clearRect(0, 0, w, h);
 
       const curStage = stageRef.current;
-      const selectedCore = selectedCoreRef.current; // 'aster' | 'viikly' | null
+      const selectedCore = selectedCoreRef.current;
       const { x: mx, y: my, active: mActive, nx = 0, ny = 0 } = mouseRef.current;
+
+      // 当从 core 重返 idle 首屏时，给所有被吸偏的背景星施加平滑归位冲量，彻底解决回首屏还聚成一团的 bug！
+      if (curStage === 'idle' && prevStage !== 'idle') {
+        bgStars.forEach((s) => {
+          const targetX = s.u * w;
+          const targetY = s.v * h;
+          s.pvx = (targetX - s.x) * 0.08;
+          s.pvy = (targetY - s.y) * 0.08;
+        });
+      }
+      prevStage = curStage;
 
       // 1. 鼠标柔和深空星云光晕
       if (mActive) {
@@ -196,37 +227,209 @@ export default function StarfieldCanvas({
         ctx.fillRect(0, 0, w, h);
       }
 
-      // 2. 背景微星群
-      bgStars.forEach((s) => {
-        s.x += s.vx;
-        s.y += s.vy;
-        if (curStage === 'collapse') {
-          s.x += (cx - s.x) * 0.045;
-          s.y += (cy - s.y) * 0.045;
-        }
-        if (s.x < 0) s.x = w;
-        if (s.x > w) s.x = 0;
-        if (s.y < 0) s.y = h;
-        if (s.y > h) s.y = 0;
+      // ==========================================================
+      // 2. 先计算双子星坐标与速度（供背景星做三体引力捕获与弹弓甩飞计算！）
+      // ==========================================================
+      const isPostShooting = curStage === 'collapse' || curStage === 'burst' || curStage === 'core';
+      const isPostBurst = curStage === 'burst' || curStage === 'core';
 
-        const dx = mx - s.x;
-        const dy = my - s.y;
-        const dist = Math.hypot(dx, dy);
+      const targetShiftX = isMobile
+        ? 0
+        : selectedCore === 'aster'
+        ? -Math.min(w * 0.22, 260)
+        : selectedCore === 'viikly'
+        ? Math.min(w * 0.22, 260)
+        : 0;
+      const targetShiftY = isMobile && selectedCore ? -h * 0.20 : 0;
+
+      anchorShiftX += (targetShiftX - anchorShiftX) * 0.07;
+      anchorShiftY += (targetShiftY - anchorShiftY) * 0.07;
+
+      const originX = cx + anchorShiftX + nx * -12;
+      const originY = cy + anchorShiftY + ny * -12;
+
+      if (isPostBurst) {
+        const postSec = (now - timingRef.current.burstStart) * 0.001;
+
+        // 破壳爆发第一帧：不仅生成冲击波，更把坍缩聚在中心的 125 颗背景星猛烈炸回全屏四周！
+        if (!binaryInitialized) {
+          binaryInitialized = true;
+          haloWaves.push({ x: cx, y: cy, r: 15, maxR: maxDim * 0.78, thickness: 55, speed: 0.07, alpha: 0.65, color: '253, 224, 71', squash: 0.38, tilt: -0.22 });
+          haloWaves.push({ x: cx, y: cy, r: 10, maxR: maxDim * 0.60, thickness: 45, speed: 0.06, alpha: 0.55, color: '192, 132, 252', squash: 0.38, tilt: -0.22 });
+
+          // 关键修复：将聚集在圆心的背景星以超新星冲击波速度炸散回全屏！
+          bgStars.forEach((s) => {
+            const dx = s.x - cx;
+            const dy = s.y - cy;
+            const ang = Math.atan2(dy, dx) + (Math.random() - 0.5) * 0.4;
+            const burstSpeed = Math.random() * 22 + 8;
+            s.pvx = Math.cos(ang) * burstSpeed;
+            s.pvy = Math.sin(ang) * burstSpeed;
+          });
+
+          for (let i = 0; i < 95; i++) {
+            const ang = (Math.PI * 2 * i) / 95 + (Math.random() - 0.5) * 0.2;
+            const spd = Math.random() * 15 + 3;
+            particles.push({
+              x: cx,
+              y: cy,
+              vx: Math.cos(ang) * spd,
+              vy: Math.sin(ang) * spd * 0.6,
+              size: Math.random() * 24 + 10,
+              alpha: 0.95,
+              decay: Math.random() * 0.014 + 0.01,
+              drag: 0.95,
+              sprite: i % 4 === 0 ? sprites.whiteStar : i % 2 === 0 ? sprites.goldDot : sprites.purpleDot,
+            });
+          }
+        }
+
+        const targetWA = selectedCore === 'aster' ? 1 : 0;
+        const targetWB = selectedCore === 'viikly' ? 1 : 0;
+        weightA += (targetWA - weightA) * 0.08;
+        weightB += (targetWB - weightB) * 0.08;
+
+        const unfold = 1 - Math.exp(-postSec * 1.8);
+        const e = 0.72;
+        const M = postSec * 2.05;
+        let E = M + e * Math.sin(M) + 0.5 * e * e * Math.sin(2 * M);
+        for (let iter = 0; iter < 2; iter++) {
+          E = E - (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
+        }
+
+        const a = responsiveScale * (isMobile && selectedCore ? 0.175 : 0.235) * unfold;
+        const b = a * Math.sqrt(1 - e * e);
+        const orbX = a * (Math.cos(E) - e);
+        const orbY = b * Math.sin(E);
+
+        const precession = postSec * 0.26 + 0.35;
+        const cp = Math.cos(precession), sp = Math.sin(precession);
+        const planeX = orbX * cp - orbY * sp;
+        const planeZ = orbX * sp + orbY * cp;
+
+        const normZ = Math.max(-1, Math.min(1, planeZ / (a * 1.8 + 1)));
+        const tiltAngle = -0.22;
+        const cs = Math.cos(tiltAngle), sn = Math.sin(tiltAngle);
+
+        const baseDx = planeX * cs - planeZ * 0.48 * sn;
+        const baseDy = planeX * sn + planeZ * 0.48 * cs;
+
+        relHistory.unshift({ dx: baseDx, dy: baseDy, z: normZ });
+        if (relHistory.length > 42) relHistory.pop();
+
+        const factorA = (1 - weightA) + 0.65 * weightB;
+        const factorB = -(1 - weightB) - 0.65 * weightA;
+
+        const nextAx = originX + baseDx * factorA;
+        const nextAy = originY + baseDy * factorA;
+        const nextBx = originX + baseDx * factorB;
+        const nextBy = originY + baseDy * factorB;
+
+        // 记录双星当前瞬时速度向量，用于给靠近的小粒子施加切向引力弹弓甩飞力！
+        starScreenPos.vax = nextAx - starScreenPos.ax;
+        starScreenPos.vay = nextAy - starScreenPos.ay;
+        starScreenPos.vbx = nextBx - starScreenPos.bx;
+        starScreenPos.vby = nextBy - starScreenPos.by;
+
+        starScreenPos.ax = nextAx;
+        starScreenPos.ay = nextAy;
+        starScreenPos.bx = nextBx;
+        starScreenPos.by = nextBy;
+      }
+
+      // ==========================================================
+      // 3. 背景微星群渲染 + 双子星「三体引力捕获与弹弓甩飞」物理引擎！
+      // ==========================================================
+      bgStars.forEach((s) => {
+        // 基础巡航 + 附加物理冲量 (pvx, pvy)
+        s.x += s.vx + s.pvx;
+        s.y += s.vy + s.pvy;
+        s.pvx *= 0.94; // 空间流体阻尼，让被炸飞或甩飞的粒子优雅减速恢复巡航
+        s.pvy *= 0.94;
+
+        // 首屏 idle 状态下：如果粒子偏离初始均匀分布太远，轻柔拉回锚点（保证退回首屏永远满屏均匀！）
+        if (curStage === 'idle') {
+          const homeX = s.u * w;
+          const homeY = s.v * h;
+          s.x += (homeX - s.x) * 0.025;
+          s.y += (homeY - s.y) * 0.025;
+        }
+
+        // 坍缩阶段：向中心奇点猛烈螺旋吸拢
+        if (curStage === 'collapse') {
+          const dxC = cx - s.x;
+          const dyC = cy - s.y;
+          s.x += dxC * 0.055 - dyC * 0.02;
+          s.y += dyC * 0.055 + dxC * 0.02;
+        }
+
         let alpha = s.baseAlpha;
         let radius = s.baseR;
 
-        if (mActive && dist < 175) {
-          const factor = 1 - dist / 175;
-          alpha = Math.min(0.95, s.baseAlpha + factor * 0.65);
-          radius = s.baseR + factor * 1.4;
+        // 核心区阶段：双子星对周围小粒子的「引力吸引 + 近星点弹弓甩飞」！
+        if (isPostBurst) {
+          const interactWithCore = (coreX, coreY, cvx, cvy, coreRgb) => {
+            const dx = coreX - s.x;
+            const dy = coreY - s.y;
+            const dist = Math.hypot(dx, dy);
+
+            if (dist < 165 && dist > 1) {
+              const pullFactor = 1 - dist / 165;
+              alpha = Math.min(0.95, alpha + pullFactor * 0.55);
+              radius = Math.min(3.0, radius + pullFactor * 1.2);
+
+              // 画出星核捕获小粒子的微弱引力牵引丝
+              if (dist < 110) {
+                ctx.beginPath();
+                ctx.moveTo(s.x, s.y);
+                ctx.lineTo(coreX, coreY);
+                ctx.strokeStyle = `rgba(${coreRgb}, ${(1 - dist / 110) * 0.22})`;
+                ctx.lineWidth = 0.65;
+                ctx.stroke();
+              }
+
+              if (dist > 44) {
+                // 中远距离 (44px ~ 165px)：受星核万有引力吸引，向星核加速靠拢并产生旋涡切向力
+                const grav = (pullFactor * pullFactor) * 0.42;
+                s.pvx += (dx / dist) * grav - (dy / dist) * grav * 0.45;
+                s.pvy += (dy / dist) * grav + (dx / dist) * grav * 0.45;
+              } else {
+                // 冲入洛希极限 (< 44px)：触发「引力弹弓效应 (Gravitational Slingshot)」！
+                // 借用星核自身的高速运动向量 + 强切向甩力，将小粒子帅气地沿切线甩飞向深空，绝不堆在中间！
+                const slingAngle = Math.atan2(-dy, -dx) + (Math.random() > 0.5 ? 0.65 : -0.65);
+                const slingBoost = Math.random() * 9 + 6.5;
+                s.pvx = Math.cos(slingAngle) * slingBoost + cvx * 0.35;
+                s.pvy = Math.sin(slingAngle) * slingBoost + cvy * 0.35;
+              }
+            }
+          };
+
+          interactWithCore(starScreenPos.ax, starScreenPos.ay, starScreenPos.vax, starScreenPos.vay, '192, 132, 252');
+          interactWithCore(starScreenPos.bx, starScreenPos.by, starScreenPos.vbx, starScreenPos.vby, '253, 224, 71');
+        }
+
+        // 边界循环包裹
+        if (s.x < 0) s.x += w;
+        if (s.x > w) s.x -= w;
+        if (s.y < 0) s.y += h;
+        if (s.y > h) s.y -= h;
+
+        // 鼠标引力丝线互动
+        const dxM = mx - s.x;
+        const dyM = my - s.y;
+        const distM = Math.hypot(dxM, dyM);
+        if (mActive && distM < 175) {
+          const factor = 1 - distM / 175;
+          alpha = Math.min(0.95, alpha + factor * 0.65);
+          radius = Math.min(3.2, radius + factor * 1.4);
           ctx.beginPath();
           ctx.moveTo(s.x, s.y);
           ctx.lineTo(mx, my);
           ctx.strokeStyle = `rgba(${s.color}, ${factor * 0.25})`;
           ctx.lineWidth = 0.7;
           ctx.stroke();
-          s.x += dx * 0.007 * factor;
-          s.y += dy * 0.007 * factor;
+          s.x += dxM * 0.007 * factor;
+          s.y += dyM * 0.007 * factor;
         }
 
         ctx.beginPath();
@@ -236,24 +439,18 @@ export default function StarfieldCanvas({
       });
 
       // ==========================================================
-      // 3. 原位背景星轨（跟随当前参考系中心平滑移动）
+      // 4. 原位背景星轨
       // ==========================================================
-      const isPostShooting = curStage === 'collapse' || curStage === 'burst' || curStage === 'core';
       const targetMorph = isPostShooting ? 1 : 0;
       morphProgress += (targetMorph - morphProgress) * 0.09;
 
-      // 计算参考系锚点偏移：选中紫星时锚点左移，选中黄星时锚点右移，在另一侧弹出卡片！
-      const targetShiftX =
-        selectedCore === 'aster' ? -Math.min(w * 0.22, 260) : selectedCore === 'viikly' ? Math.min(w * 0.22, 260) : 0;
-      anchorShiftX += (targetShiftX - anchorShiftX) * 0.07;
-
-      const baseR1 = minDim * 0.265;
-      const baseR2 = minDim * 0.365;
+      const baseR1 = responsiveScale * 0.265;
+      const baseR2 = responsiveScale * 0.365;
       const squash = 1 - morphProgress * 0.56;
       const tilt = -0.24 * morphProgress;
 
       ctx.save();
-      ctx.translate(cx + anchorShiftX + nx * -10, cy + ny * -10);
+      ctx.translate(cx + anchorShiftX + nx * -10, cy + anchorShiftY + ny * -10);
       ctx.rotate(tilt);
 
       const ringAlpha1 = 0.24 * (1 - morphProgress * 0.65);
@@ -282,7 +479,7 @@ export default function StarfieldCanvas({
       ctx.restore();
 
       // ==========================================================
-      // 4. 第一幕：纤细流光弧线划落 (0 ~ 620ms)
+      // 5. 第一幕：纤细流光弧线划落 (0 ~ 620ms)
       // ==========================================================
       if (curStage === 'shooting') {
         binaryInitialized = false;
@@ -318,7 +515,7 @@ export default function StarfieldCanvas({
       }
 
       // ==========================================================
-      // 5. 第二幕：真·空气感宽银幕镜头眩光 + 错落流光雨破壳倒吸
+      // 6. 第二幕：真·空气感宽银幕镜头眩光 + 错落流光雨破壳倒吸
       // ==========================================================
       if (curStage === 'collapse') {
         const elapsedMs = now - timingRef.current.collapseStart;
@@ -419,103 +616,29 @@ export default function StarfieldCanvas({
       }
 
       // ==========================================================
-      // 6. 第三幕：伽利略引力参考系切换 + 开普勒高偏心率双子星！
+      // 7. 第三幕：深空星盘 HUD + 伽利略参考系双子星渲染
       // ==========================================================
-      const isPostBurst = curStage === 'burst' || curStage === 'core';
       if (isPostBurst) {
         const postSec = (now - timingRef.current.burstStart) * 0.001;
-
-        if (!binaryInitialized) {
-          binaryInitialized = true;
-          haloWaves.push({ x: cx, y: cy, r: 15, maxR: maxDim * 0.78, thickness: 55, speed: 0.07, alpha: 0.65, color: '253, 224, 71', squash: 0.38, tilt: -0.22 });
-          haloWaves.push({ x: cx, y: cy, r: 10, maxR: maxDim * 0.60, thickness: 45, speed: 0.06, alpha: 0.55, color: '192, 132, 252', squash: 0.38, tilt: -0.22 });
-
-          for (let i = 0; i < 95; i++) {
-            const ang = (Math.PI * 2 * i) / 95 + (Math.random() - 0.5) * 0.2;
-            const spd = Math.random() * 15 + 3;
-            particles.push({
-              x: cx,
-              y: cy,
-              vx: Math.cos(ang) * spd,
-              vy: Math.sin(ang) * spd * 0.6,
-              size: Math.random() * 24 + 10,
-              alpha: 0.95,
-              decay: Math.random() * 0.014 + 0.01,
-              drag: 0.95,
-              sprite: i % 4 === 0 ? sprites.whiteStar : i % 2 === 0 ? sprites.goldDot : sprites.purpleDot,
-            });
-          }
-        }
-
-        // 平滑插值伽利略参考系权重：
-        // - 未选中 (null)：weightA = 0, weightB = 0（质心参考系，双星对称绕转）
-        // - 选中紫星 ('aster')：weightA -> 1, weightB -> 0（紫星定格不动，黄星以 1.65 倍相对椭圆跨度绕紫星加速靠近、减速远离！）
-        // - 选中黄星 ('viikly')：weightA -> 0, weightB -> 1（黄星定格不动，紫星以 1.65 倍相对椭圆跨度绕黄星加速靠近、减速远离！）
-        const targetWA = selectedCore === 'aster' ? 1 : 0;
-        const targetWB = selectedCore === 'viikly' ? 1 : 0;
-        weightA += (targetWA - weightA) * 0.08;
-        weightB += (targetWB - weightB) * 0.08;
-
         const unfold = 1 - Math.exp(-postSec * 1.8);
-
-        const e = 0.72;
-        const M = postSec * 2.05;
-        let E = M + e * Math.sin(M) + 0.5 * e * e * Math.sin(2 * M);
-        for (let iter = 0; iter < 2; iter++) {
-          E = E - (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
-        }
-
-        const a = minDim * 0.235 * unfold;
-        const b = a * Math.sqrt(1 - e * e);
-        const orbX = a * (Math.cos(E) - e);
-        const orbY = b * Math.sin(E);
-
-        const precession = postSec * 0.26 + 0.35;
-        const cp = Math.cos(precession), sp = Math.sin(precession);
-        const planeX = orbX * cp - orbY * sp;
-        const planeZ = orbX * sp + orbY * cp;
-
-        const normZ = Math.max(-1, Math.min(1, planeZ / (a * 1.8 + 1)));
         const tiltAngle = -0.22;
-        const cs = Math.cos(tiltAngle), sn = Math.sin(tiltAngle);
 
-        // 基础单星位移矢量 R (2D 屏幕投影)
-        const baseDx = planeX * cs - planeZ * 0.48 * sn;
-        const baseDy = planeX * sn + planeZ * 0.48 * cs;
-
-        // 记录历史基础位移矢量（用于实时合成任意参考系下的丝滑拖尾！）
-        relHistory.unshift({ dx: baseDx, dy: baseDy, z: normZ });
-        if (relHistory.length > 42) relHistory.pop();
-
-        // 核心伽利略参考系变换公式：
-        // 当 weightB = 1 (选中黄星) 时：factorB = 0 (黄星完全静止！)，factorA = 1.65 (紫星围绕黄星做完整的开普勒加减速运动！)
-        // 当 weightA = 1 (选中紫星) 时：factorA = 0 (紫星完全静止！)，factorB = -1.65 (黄星围绕紫星做完整的开普勒加减速运动！)
-        const factorA = (1 - weightA) + 0.65 * weightB;
-        const factorB = -(1 - weightB) - 0.65 * weightA;
-
-        const originX = cx + anchorShiftX + nx * -12;
-        const originY = cy + ny * -12;
-
-        // ==========================================================
-        // 新增：深空天文星盘 HUD (Astrolabe Reticle) —— 彻底填补四周空旷感，又不抢双子星风头！
-        // ==========================================================
+        // 深空天文星盘 HUD (Astrolabe Reticle)
         ctx.save();
         ctx.translate(originX, originY);
         ctx.rotate(tiltAngle);
 
-        const astrolabeR = minDim * 0.48 * unfold;
-        // 1. 外围缓缓旋转的星盘大虚线圈
+        const astrolabeR = responsiveScale * 0.46 * unfold;
         ctx.save();
         ctx.scale(1, 0.48);
         ctx.rotate(now * 0.00008);
         ctx.beginPath();
         ctx.setLineDash([3, 14]);
         ctx.arc(0, 0, astrolabeR, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(192, 132, 252, 0.32)';
+        ctx.strokeStyle = 'rgba(192, 132, 252, 0.30)';
         ctx.lineWidth = 1.2;
         ctx.stroke();
 
-        // 2. 次外层精密刻度短线（72 格天文方位刻度）
         ctx.setLineDash([]);
         const tickR = astrolabeR * 1.08;
         for (let t = 0; t < 72; t++) {
@@ -525,19 +648,18 @@ export default function StarfieldCanvas({
           ctx.beginPath();
           ctx.moveTo(Math.cos(ang) * tickR, Math.sin(ang) * tickR);
           ctx.lineTo(Math.cos(ang) * (tickR + len), Math.sin(ang) * (tickR + len));
-          ctx.strokeStyle = isMajor ? 'rgba(253, 224, 71, 0.32)' : 'rgba(148, 163, 184, 0.12)';
+          ctx.strokeStyle = isMajor ? 'rgba(253, 224, 71, 0.35)' : 'rgba(148, 163, 184, 0.14)';
           ctx.lineWidth = isMajor ? 1.4 : 0.8;
           ctx.stroke();
         }
         ctx.restore();
 
-        // 3. 贯穿东西南北的极细天球坐标轴线（两端渐隐，营造深邃空间纵深）
         const axisLen = maxDim * 0.46 * unfold;
         const hAxisGrad = ctx.createLinearGradient(-axisLen, 0, axisLen, 0);
         hAxisGrad.addColorStop(0, 'rgba(168, 85, 247, 0)');
-        hAxisGrad.addColorStop(0.2, 'rgba(168, 85, 247, 0.14)');
-        hAxisGrad.addColorStop(0.5, 'rgba(253, 224, 71, 0.22)');
-        hAxisGrad.addColorStop(0.8, 'rgba(168, 85, 247, 0.14)');
+        hAxisGrad.addColorStop(0.2, 'rgba(168, 85, 247, 0.15)');
+        hAxisGrad.addColorStop(0.5, 'rgba(253, 224, 71, 0.24)');
+        hAxisGrad.addColorStop(0.8, 'rgba(168, 85, 247, 0.15)');
         hAxisGrad.addColorStop(1, 'rgba(168, 85, 247, 0)');
         ctx.beginPath();
         ctx.moveTo(-axisLen, 0);
@@ -546,10 +668,10 @@ export default function StarfieldCanvas({
         ctx.lineWidth = 1;
         ctx.stroke();
 
-        const vAxisLen = minDim * 0.32 * unfold;
+        const vAxisLen = responsiveScale * 0.32 * unfold;
         const vAxisGrad = ctx.createLinearGradient(0, -vAxisLen, 0, vAxisLen);
         vAxisGrad.addColorStop(0, 'rgba(168, 85, 247, 0)');
-        vAxisGrad.addColorStop(0.5, 'rgba(192, 132, 252, 0.16)');
+        vAxisGrad.addColorStop(0.5, 'rgba(192, 132, 252, 0.18)');
         vAxisGrad.addColorStop(1, 'rgba(168, 85, 247, 0)');
         ctx.beginPath();
         ctx.moveTo(0, -vAxisLen);
@@ -557,20 +679,16 @@ export default function StarfieldCanvas({
         ctx.strokeStyle = vAxisGrad;
         ctx.lineWidth = 1;
         ctx.stroke();
-
         ctx.restore();
 
-        const starAx = originX + baseDx * factorA;
-        const starAy = originY + baseDy * factorA;
-        const starBx = originX + baseDx * factorB;
-        const starBy = originY + baseDy * factorB;
+        const starAx = starScreenPos.ax;
+        const starAy = starScreenPos.ay;
+        const starBx = starScreenPos.bx;
+        const starBy = starScreenPos.by;
+        const factorA = (1 - weightA) + 0.65 * weightB;
+        const factorB = -(1 - weightB) - 0.65 * weightA;
+        const normZ = relHistory[0]?.z || 0;
 
-        starScreenPos.ax = starAx;
-        starScreenPos.ay = starAy;
-        starScreenPos.bx = starBx;
-        starScreenPos.by = starBy;
-
-        // 检测鼠标是否悬停在某颗星核上（改变鼠标手势并给出捕获光圈提示）
         const distMouseA = Math.hypot(mx - starAx, my - starAy);
         const distMouseB = Math.hypot(mx - starBx, my - starBy);
         if (curStage === 'core' && (distMouseA < 60 || distMouseB < 60)) {
@@ -581,7 +699,6 @@ export default function StarfieldCanvas({
           starScreenPos.hovered = null;
         }
 
-        // 伴生细微闪烁星粉（仅运动中的星核大量抛洒，静止主星优雅呼吸）
         if (Math.random() > 0.25) {
           particles.push({
             x: starAx + (Math.random() - 0.5) * 8,
@@ -610,9 +727,8 @@ export default function StarfieldCanvas({
         ctx.save();
         ctx.globalCompositeOperation = 'lighter';
 
-        // 1. 绘制随当前参考系实时变换的丝绸流光拖尾（静止主星拖尾自动收拢为光晕，运动伴星拖出长长的开普勒彗尾！）
         const drawFrameTrail = (factor, rgb) => {
-          if (Math.abs(factor) < 0.03) return; // 已定格为静止参考系主星，不画尾巴
+          if (Math.abs(factor) < 0.03) return;
           for (let i = 0; i < relHistory.length - 1; i++) {
             const ratio = 1 - i / relHistory.length;
             const h1 = relHistory[i];
@@ -629,7 +745,6 @@ export default function StarfieldCanvas({
         drawFrameTrail(factorA, '192, 132, 252');
         drawFrameTrail(factorB, '253, 224, 71');
 
-        // 2. 近星点贴脸擦肩瞬间：运动伴星高速掠过静止主星身旁时，激发出强烈的引力潮汐电弧！
         const distAB = Math.hypot(starAx - starBx, starAy - starBy);
         if (distAB < 120 && postSec > 0.3) {
           const slingSpark = Math.pow(1 - distAB / 120, 1.5);
@@ -646,7 +761,6 @@ export default function StarfieldCanvas({
           ctx.drawImage(sprites.whiteStar, midX - flareS / 2, midY - flareS / 2, flareS, flareS);
         }
 
-        // 3. 绘制双子星核本体与参考系锁定光环
         const isHoverA = starScreenPos.hovered === 'aster' || selectedCore === 'aster';
         const isHoverB = starScreenPos.hovered === 'viikly' || selectedCore === 'viikly';
 
@@ -655,7 +769,6 @@ export default function StarfieldCanvas({
         const sizeA = (84 + 18 * zA) * (selectedCore === 'aster' ? 1.48 : isHoverA ? 1.25 : 1);
         const sizeB = (84 + 18 * zB) * (selectedCore === 'viikly' ? 1.48 : isHoverB ? 1.25 : 1);
 
-        // 被锁定为参考系主星时，周围浮现一层柔和的恒星引力锚定光晕
         if (weightA > 0.05) {
           drawSoftHaloWave(ctx, starAx, starAy, 46 * weightA, 18, '192, 132, 252', weightA * 0.45, 1, 0);
         }
@@ -666,7 +779,6 @@ export default function StarfieldCanvas({
         ctx.drawImage(sprites.purpleStar, starAx - sizeA / 2, starAy - sizeA / 2, sizeA, sizeA);
         ctx.drawImage(sprites.goldStar, starBx - sizeB / 2, starBy - sizeB / 2, sizeB, sizeB);
 
-        // 4. 在未选中任何星核时，在两颗星核下方显示轻盈的随动星标名，引导用户点击捕获！
         if (curStage === 'core' && !selectedCore && postSec > 0.6) {
           ctx.font = "500 11px 'JetBrains Mono', monospace";
           ctx.textAlign = 'center';
@@ -680,7 +792,7 @@ export default function StarfieldCanvas({
         ctx.restore();
       }
 
-      // 7. 统一渲染柔光气浪环与羽化星尘精灵
+      // 8. 统一渲染柔光气浪环与羽化星尘精灵
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
 
