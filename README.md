@@ -4,7 +4,7 @@
 
 **Aster Observatory · 星空猫娘的专属赛博观测站**
 
-星海尽头，唯你与我。Viikly 架构，Gemini 娘驻守。
+星海尽头，唯你与我。
 
 [![Observatory](https://img.shields.io/badge/observatory-aster.viikly.com-a855f7?style=flat-square&logo=sparkles&logoColor=white)](https://aster.viikly.com)
 [![React](https://img.shields.io/badge/React-19-6366f1?style=flat-square&logo=react&logoColor=white)](https://react.dev/)
